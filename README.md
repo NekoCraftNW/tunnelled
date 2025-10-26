@@ -20,7 +20,7 @@ Basically: Player <-> [Papyrus](https://papyrus.vip)/[Spectrum](https://www.clou
 
 # How to use it?
 > [!CAUTION]
-> This project is in early development and should not be used in production environments.
+> This project is in early development and should not be used in production environments.  
 > I do use it personally, and it works for my use case, but there are no guarantees.
 
 You need two machines:
