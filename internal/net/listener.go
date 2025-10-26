@@ -57,7 +57,7 @@ type Listener struct {
 // the connection id for later routing.
 func (l *Listener) FireUp() {
 	bind := fmt.Sprintf("tcp://%s:%d", l.Route.BindIP, l.Route.BindPort)
-	err := gnet.Run(l, bind, gnet.WithMulticore(true))
+	err := gnet.Run(l, bind, gnet.WithMulticore(true), gnet.WithReusePort(true))
 	if err != nil {
 		panic(errors.Join(errors.New(fmt.Sprintf("failed to start listener %s over %s", l.Route.RouteID, bind)), err))
 	}
@@ -166,8 +166,9 @@ func (l *Listener) OnTraffic(clientConn gnet.Conn) (action gnet.Action) {
 
 	if l.IsServer {
 		// Server mode: check if this is a connection ID packet from client
-		isIDPacket, connectionID := (&Connection{}).IsConnectionIDPacket(data)
+		isIDPacket, content := (&Connection{}).IsConnectionIDPacket(data)
 		if isIDPacket {
+			connectionID, proxyInfo := (&Connection{}).ParseConnectionIDPacket(content)
 			fmt.Printf("Received connection ID: %s from client\n", connectionID)
 
 			// Create a new connection representing this user session
@@ -175,10 +176,17 @@ func (l *Listener) OnTraffic(clientConn gnet.Conn) (action gnet.Action) {
 				Listener:          l,
 				ConnectionID:      connectionID,
 				ClientConn:        clientConn, // The connection from tunnelled-client
+				ProxyInfo:         proxyInfo,  // Store proxy info from client
 				IsConnected:       false,      // Not connected to backend yet
 				PacketQueue:       make([][]byte, 0),
 				MaxReconnectDelay: 30 * time.Second,
 				MaxQueueSize:      1000,
+				HAProxyProcessed:  true, // Already processed in client
+			}
+
+			if proxyInfo != nil {
+				fmt.Printf("Received proxy info: %s:%d -> %s:%d\n",
+					proxyInfo.SrcIP, proxyInfo.SrcPort, proxyInfo.DstIP, proxyInfo.DstPort)
 			}
 
 			clientConn.SetContext(connection)
@@ -207,16 +215,37 @@ func (l *Listener) OnTraffic(clientConn gnet.Conn) (action gnet.Action) {
 	}
 
 	// Client mode traffic handling
-	fmt.Println("client sent traffic, forwarding to backend...")
 	conn, ok := clientConn.Context().(*Connection)
 	if !ok || conn == nil {
 		return gnet.Close
 	}
 
+	// Process HAProxy protocol if enabled on client
+	if conn.Listener.Route.HAProxy != router.HAProxyOFF {
+		processedData, err := conn.ProcessHAProxyData(data)
+		if err != nil {
+			fmt.Printf("HAProxy parsing error: %v\n", err)
+			return gnet.Close
+		}
+		if processedData == nil {
+			// Need more data for complete HAProxy header
+			return gnet.None
+		}
+		data = processedData
+		if len(data) == 0 {
+			// Only HAProxy header received, no actual data yet
+			return gnet.None
+		}
+	}
+
+	// only debug print here to reduce spam
+	//fmt.Println("client sent traffic, forwarding to backend...")
+
 	if conn.IsConnected && conn.BackendConn != nil {
 		conn.BackendConn.Write(data)
 	} else {
-		fmt.Println("Backend disconnected, queuing packet...")
+		// same debug here
+		// fmt.Println("Backend disconnected, queuing packet...")
 		conn.QueuePacket(data)
 	}
 
@@ -224,7 +253,7 @@ func (l *Listener) OnTraffic(clientConn gnet.Conn) (action gnet.Action) {
 }
 
 func (rth *ReverseTrafficHandler) HandleTraffic(gnetConn gnet.Conn, data []byte) gnet.Action {
-	fmt.Println("backend sent traffic, forwarding to client...")
+	//fmt.Println("backend sent traffic, forwarding to client...")
 	rth.Connection.ClientConn.Write(data)
 	return gnet.None
 }
@@ -235,6 +264,15 @@ func (rth *ReverseTrafficHandler) OnConnection(gnetConn gnet.Conn) {
 	rth.Connection.ReconnectAttempts = 0
 	fmt.Printf("Backend connected for listener %s (ConnectionID: %s)\n",
 		rth.Connection.Listener.Route.RouteID, rth.Connection.ConnectionID)
+
+	// Send HAProxy header if enabled in server mode and we have proxy info
+	if rth.Connection.Listener.IsServer && rth.Connection.Listener.Route.HAProxy != router.HAProxyOFF && rth.Connection.ProxyInfo != nil {
+		haproxyHeader := rth.Connection.GenerateHAProxyHeader()
+		if haproxyHeader != nil {
+			gnetConn.Write(haproxyHeader)
+			fmt.Printf("Sent HAProxy %s header to backend\n", rth.Connection.Listener.Route.HAProxy)
+		}
+	}
 
 	// Send connection ID as first packet if in client mode
 	if !rth.Connection.Listener.IsServer {

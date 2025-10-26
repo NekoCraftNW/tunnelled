@@ -42,10 +42,12 @@ func NewManager() *Manager {
 
 func (m *Manager) LoadDefault() {
 	route := &Route{
-		RouteID:  "default",
-		BindIP:   "localhost",
-		BindPort: 8080,
-		HAProxy:  HAProxyOFF,
+		RouteID:     "default",
+		BindIP:      "localhost",
+		BindPort:    8080,
+		HAProxy:     HAProxyOFF,
+		BackendIP:   "localhost",
+		BackendPort: 25577,
 	}
 	m.Routes.Store("default", route)
 	_ = m.SaveRoutesToFile()
@@ -82,7 +84,7 @@ type Route struct {
 	BindIP   string `json:"bind_ip"`
 	BindPort int    `json:"bind_port"`
 
-	HAProxy HAProxyVersion `json:"haproxy"`
+	HAProxy HAProxyVersion `json:"ha_proxy"`
 
 	BackendIP   string `json:"backend_ip"`
 	BackendPort int    `json:"backend_port"`
