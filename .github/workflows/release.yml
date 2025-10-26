@@ -1,0 +1,67 @@
+name: Build and Release Linux Binaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        
+    - name: Install dependencies
+      run: go mod download
+      
+    - name: Make build script executable
+      run: chmod +x ./build-all-linux.sh
+      
+    - name: Build binaries
+      run: ./build-all-linux.sh
+      
+    - name: Generate version
+      id: version
+      run: |
+        VERSION=$(date +"%Y.%d%m")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+      
+    - name: Create release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.tag }}
+        name: tunnelled v${{ steps.version.outputs.version }} Linux Release
+        draft: false
+        prerelease: false
+        files: |
+          tunnelled-linux-amd64
+          tunnelled-linux-arm64
+          tunnelled-linux-arm
+        body: |
+          ## tunnelled v${{ steps.version.outputs.version }} Linux Release
+          
+          This release contains Linux binaries for multiple architectures:
+          
+          - `tunnelled-linux-amd64` - For Intel/AMD 64-bit servers
+          - `tunnelled-linux-arm64` - For ARM 64-bit servers (modern ARM)
+          - `tunnelled-linux-arm` - For ARM 32-bit devices (Raspberry Pi)
+          
+          ## Installation
+          
+          1. Download the appropriate binary for your architecture
+          2. Make it executable: `chmod +x tunnelled-linux-*`
+          3. Copy your config.yaml to the same directory
+          4. Run: `./tunnelled-linux-amd64 --config config.yaml`
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
