@@ -156,7 +156,10 @@ func NewHTTPServer(manager *router.Manager) {
 	// Start server on configured port
 	address := fmt.Sprintf(":%d", clientConfig.HTTPPort)
 	fmt.Printf("Starting HTTP server on %s\n", address)
-	r.Run(address)
+	err = r.Run(address)
+	if err != nil {
+		panic(fmt.Errorf("failed to start HTTP server: %v", err))
+	}
 }
 
 func ReadToken() string {

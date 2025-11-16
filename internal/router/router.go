@@ -44,7 +44,7 @@ func (m *Manager) LoadDefault() {
 	route := &Route{
 		RouteID:     "default",
 		BindIP:      "localhost",
-		BindPort:    8080,
+		BindPort:    25577,
 		HAProxy:     HAProxyOFF,
 		BackendIP:   "localhost",
 		BackendPort: 25577,
