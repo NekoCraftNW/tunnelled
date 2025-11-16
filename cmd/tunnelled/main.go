@@ -4,7 +4,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"time"
+	"tunnelled/internal/config"
 	"tunnelled/internal/http"
+	"tunnelled/internal/ip"
 	"tunnelled/internal/net"
 	"tunnelled/internal/net/dialer"
 	"tunnelled/internal/router"
@@ -52,7 +55,7 @@ func main() {
 	})
 
 	if *appType == "server" {
-		fireUpServer()
+		fireUpServer(rm)
 	}
 
 	if *appType == "client" {
@@ -60,7 +63,56 @@ func main() {
 	}
 }
 
-func fireUpServer() {
+func fireUpServer(rm *router.Manager) {
+	// Load server configuration
+	serverConfig, err := config.LoadServerConfig()
+	if err != nil {
+		panic(fmt.Errorf("failed to load server config: %v", err))
+	}
+
+	// Initialize IP discovery service
+	discoveryService := ip.NewDiscoveryService(serverConfig.IPCheckInterval)
+
+	// Get client bearer token (should be same as client's .token file)
+	clientBearerToken := "Bearer " + http.ReadToken()
+
+	// Initialize IP notifier
+	notifier := ip.NewIPNotifier(rm, serverConfig.ClientEndpoint, clientBearerToken)
+
+	// Start IP monitoring goroutine
+	go func() {
+		ticker := time.NewTicker(time.Duration(serverConfig.IPCheckInterval) * time.Second)
+		defer ticker.Stop()
+
+		// Initial IP check
+		currentIP, changed, err := discoveryService.ForceCheck()
+		if err != nil {
+			fmt.Printf("Initial IP check failed: %v\n", err)
+		} else if changed {
+			fmt.Printf("Initial public IP: %s\n", currentIP)
+			err = notifier.NotifyClientOfIPChange(currentIP)
+			if err != nil {
+				fmt.Printf("Failed to notify client of initial IP: %v\n", err)
+			}
+		}
+
+		// Periodic IP checks
+		for range ticker.C {
+			newIP, changed, err := discoveryService.CheckAndUpdateIP()
+			if err != nil {
+				fmt.Printf("IP check failed: %v\n", err)
+				continue
+			}
+
+			if changed {
+				err = notifier.NotifyClientOfIPChange(newIP)
+				if err != nil {
+					fmt.Printf("Failed to notify client of IP change: %v\n", err)
+				}
+			}
+		}
+	}()
+
 	// in server mode, we need to lock down the process to keep gnet running
 	select {}
 }
